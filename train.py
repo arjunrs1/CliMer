@@ -13,6 +13,8 @@ from torch import nn
 from torch.utils.data import DataLoader
 from torch.optim.optimizer import Optimizer
 from torch.utils.tensorboard import SummaryWriter
+import torch.distributed as dist
+from torch.nn.parallel import DistributedDataParallel as DDP
 
 from args import create_parser
 from lib.model.model_lightweight import TemporalGrounding
@@ -21,8 +23,10 @@ from lib.dataset.dataset_ego4d_timestamp import Ego4dDatasetTimestamp
 from lib.dataset.dataset_ego4d_full_video import Ego4dDatasetFullVideo
 from lib.dataset.dataset_epic_timestamp import EpicDatasetTimestamp
 from lib.dataset.dataset_epic_full_video import EpicDatasetFullVideo
+from lib.dataset.dataset_egoexo4d_timestamp import EgoExo4DDatasetTimestamp
+from lib.dataset.dataset_egoexo4d_full_video import EgoExo4DDatasetFullVideo
 from utils.data_utils import load_omnivore_clip_features, load_omnivore_clip_features_diff_videos, \
-    load_all_omnivore_features
+    load_all_omnivore_features, load_all_egovlpv2_features
 from utils.utils import iou_stats, iou_time, iou_time_based, get_hard_preds, split_features, recombine_preds, \
     get_weights_single_caption, get_balanced_loss_single_caption, get_balanced_loss_batch
 
@@ -53,7 +57,7 @@ def main(args):
         test_dataset_full_video = Ego4dDatasetFullVideo(args.caption_data_val, args.bert_features,
                                                         args.same_vid_sampling, args.ego4d_metadata, args.fps,
                                                         args.feature_stride, DEVICE)
-    else:
+    elif args.dataset == "epic":
         train_dataset = EpicDatasetTimestamp(args.caption_data_train, args.epic_metadata, args.epic_all_data,
                                              args.bert_features, args.same_vid_sampling, args.combine,
                                              args.fixed_clip_length, args.clip_adjacent_timestamps, args.fps,
@@ -62,6 +66,15 @@ def main(args):
         test_dataset_full_video = EpicDatasetFullVideo(args.caption_data_val, args.bert_features,
                                                        args.same_vid_sampling, args.epic_metadata, args.fps,
                                                        args.feature_stride, DEVICE)
+    elif args.dataset == "egoexo4d":
+        train_dataset = EgoExo4DDatasetTimestamp(args.caption_data_train, args.egoexo4d_train_metadata,
+                                             args.bert_features, args.same_vid_sampling, args.combine,
+                                             args.fixed_clip_length, args.clip_adjacent_timestamps, args.egovlp,
+                                             args.egovlp_data, args.fps, args.feature_stride, args.use_keysteps, DEVICE)
+
+        test_dataset_full_video = EgoExo4DDatasetFullVideo(args.caption_data_val, args.bert_features,
+                                                       args.same_vid_sampling, args.egoexo4d_val_metadata, args.fps,
+                                                       args.feature_stride, args.use_keysteps, DEVICE)
     train_loader = torch.utils.data.DataLoader(
         train_dataset,
         shuffle=True,
@@ -154,8 +167,12 @@ class Trainer:
         self.args = args
         self.step = 0
         # data loading
-        self.omnivore_dict = load_all_omnivore_features(self.args.caption_data_train, self.args.caption_data_val,
-                                                        self.args.caption_data_test, self.args.video_feature_path)
+        if self.args.dataset == "egoexo4d":
+            self.omnivore_dict = load_all_egovlpv2_features(self.args.caption_data_train, self.args.caption_data_val,
+                                                            self.args.caption_data_val, self.args.video_feature_path)
+        else:
+            self.omnivore_dict = load_all_omnivore_features(self.args.caption_data_train, self.args.caption_data_val,
+                                                            self.args.caption_data_val, self.args.video_feature_path)
 
     def train(
             self,
@@ -263,8 +280,10 @@ class Trainer:
 
                 self.step += 1
 
+            if not os.path.exists(self.args.checkpoint_save_path):
+                os.makedirs(self.args.checkpoint_save_path)
             if (epoch + 1) % check_frequency == 0 or (epoch + 1) == epochs:
-                checkpoint_path = args.checkpoint_path_root + '_ep' + str(epoch) + '.pth'
+                checkpoint_path = os.path.join(self.args.checkpoint_save_path, 'epoch_' + str(epoch) + '.pth')
                 print(f"Saving model to {checkpoint_path}")
                 torch.save(self.model.state_dict(), checkpoint_path)
 
@@ -312,7 +331,7 @@ class Trainer:
             assert num_features == label_caption1.size()[1]
 
             # Calculate the output logits
-            if num_features <= args.seg_size:
+            if num_features <= self.args.seg_size:
                 preds_cap1 = self.model.predict(features, bert_features_cap1, num_tokens_cap1, self.args.val)
                 preds_cap1 = preds_cap1.squeeze(2).detach()
 
@@ -352,9 +371,13 @@ class Trainer:
             frac_time_above_1, frac_time_above_3, frac_time_above_5, frac_time_above_7 \
             = iou_stats(iou_time_list)
 
-        mr = (frac_time_above_1 + frac_time_above_3 + frac_time_above_5) / 3
+        mr = (frac_time_above_1 + frac_time_above_3 + frac_time_above_5 + frac_time_above_7) / 4
 
-        with open(args.results_path + 'test_clean.txt', 'a') as file:
+        results_dir = os.path.join(self.args.results_path, self.args.dataset)
+        if not os.path.exists(results_dir):
+            os.makedirs(results_dir)
+
+        with open(os.path.join(results_dir, "test_clean.txt"), 'a') as file:
             file.write(f'Epoch {epoch} Threshold {self.args.pred_threshold}  0.1: {round(frac_time_above_1, 3)}, '  
                        f'0.3: {round(frac_time_above_3, 3)}, 0.5: {round(frac_time_above_5, 3)}, '
                        f'0.7: {round(frac_time_above_7, 3)}, mR: {round(mr, 3)} \n')

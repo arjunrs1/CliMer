@@ -32,7 +32,6 @@ else:
     DEVICE = torch.device("cpu")
 print('device', DEVICE)
 
-
 def main(args):
     if args.dataset == "ego4d":
         test_dataset = Ego4dDatasetFullVideo(args.caption_data_val, args.bert_features,
@@ -99,6 +98,7 @@ def validate_full_videos(model, test_loader, args, device):
     feature_times_list = []
     clip_start_stop_time_list = []
     iou_time_list = torch.tensor([])
+    view_ranks = []
 
     if args.dataset == "egoexo4d":
         omnivore_dict = load_all_egovlpv2_features(args.caption_data_train, args.caption_data_val,
@@ -109,62 +109,63 @@ def validate_full_videos(model, test_loader, args, device):
 
     model.eval()
     for feature_idxs, feature_times, bert_features, num_tokens, label_caption1, caption1, clip_start_stop_time, \
-        video_id in tqdm(test_loader):
+        video_id, view_rank in tqdm(test_loader):
 
         features = load_omnivore_clip_features(omnivore_dict, feature_idxs, video_id).to(device)
-        print("VIDEO FEATURES SHAPE:")
-        print(features.shape)
 
         num_features = feature_idxs.shape[1]
-        bert_features_cap1 = bert_features.to(device)
-        label_caption1 = label_caption1.to(device)
-        num_tokens_cap1 = num_tokens.to(device)
+
+        #ground each keystep in current window separately, but compute statistics over window before appending to iou_list, etc.
+        for bert_f, lab_cap, num_tok, cl_sta_sto in zip(bert_features, label_caption1, num_tokens, clip_start_stop_time):
+            bert_features_cap1 = bert_f.to(device)
+            label_caption1 = lab_cap.to(device)
+            num_tokens_cap1 = num_tok.to(device)
         
-
-        assert num_features == label_caption1.size()[1]
-
-        # Calculate the output logits
-        if num_features <= args.seg_size:
-            preds_cap1 = model.predict(features, bert_features_cap1, num_tokens_cap1, args.val)
-            preds_cap1 = preds_cap1.squeeze(2).detach()
-
-        else:
-            feature_segment_list, feature_idx_list = split_features(features, args.seg_size, args.overlap)
-            full_pred_list = []
-            for feature_segment in feature_segment_list:
-                preds_cap1 = model.predict(feature_segment, bert_features_cap1, num_tokens_cap1, args.val)
+            assert num_features == label_caption1.size()[1]
+            # Calculate the output logits
+            if num_features <= args.seg_size:
+                preds_cap1 = model.predict(features, bert_features_cap1, num_tokens_cap1, args.val)
                 preds_cap1 = preds_cap1.squeeze(2).detach()
-                preds_cap1 = preds_cap1.tolist()
-                full_pred_list.append(preds_cap1)
+            else:
+                feature_segment_list, feature_idx_list = split_features(features, args.seg_size, args.overlap)
+                full_pred_list = []
+                for feature_segment in feature_segment_list:
+                    preds_cap1 = model.predict(feature_segment, bert_features_cap1, num_tokens_cap1, args.val)
+                    preds_cap1 = preds_cap1.squeeze(2).detach()
+                    preds_cap1 = preds_cap1.tolist()
+                    full_pred_list.append(preds_cap1)
+                preds_cap1 = recombine_preds(full_pred_list, feature_idx_list, num_features)
+                preds_cap1 = torch.tensor(preds_cap1).unsqueeze(0).to(device)
+                preds_cap1 = preds_cap1.detach()
 
-            preds_cap1 = recombine_preds(full_pred_list, feature_idx_list, num_features)
-            preds_cap1 = torch.tensor(preds_cap1).unsqueeze(0).to(device)
-            preds_cap1 = preds_cap1.detach()
+            # Now want to get hard predictions from these predictions:
+            final_preds = get_hard_preds(preds_cap1, threshold=args.pred_threshold)
+            iou_time, pred_start_time, pred_end_time = iou_time_based(final_preds, feature_times, cl_sta_sto)
+            iou_time_list = torch.cat((iou_time_list, iou_time))
+            view_ranks.append(view_rank[0])
 
-        # Now want to get hard predictions from these predictions:
+            video_path = os.path.join(args.video_feature_path, video_id[0] + '.mp4')
+            pred_start_end_time = (pred_start_time, pred_end_time)
+            visualize_grounding(video_path, cl_sta_sto, pred_start_end_time)
 
-        final_preds = get_hard_preds(preds_cap1, threshold=args.pred_threshold)
-        iou_time, pred_start_time, pred_end_time = iou_time_based(final_preds, feature_times, clip_start_stop_time)
-        iou_time_list = torch.cat((iou_time_list, iou_time))
-
-        video_path = os.path.join(args.video_feature_path, video_id[0] + '.mp4')
-        pred_start_end_time = (pred_start_time, pred_end_time)
-        visualize_grounding(video_path, clip_start_stop_time, pred_start_end_time)
-
-        preds1_list.append(preds_cap1)
-        labels1_list.append(label_caption1)
-        captions_list.append(caption1)
-        feature_idxs_list.append(feature_idxs)
-        feature_times_list.append(feature_times)
-        clip_start_stop_time_list.append(clip_start_stop_time)
+            preds1_list.append(preds_cap1)
+            labels1_list.append(label_caption1)
+            captions_list.append(caption1)
+            feature_idxs_list.append(feature_idxs)
+            feature_times_list.append(feature_times)
+            clip_start_stop_time_list.append(cl_sta_sto)
 
     # iou stats
+    print("LENGTH IOU TIME LIST:")
+    print(len(iou_time_list))
+    print(len(view_ranks))
+    print(view_ranks)
 
     iou_time_above_1, iou_time_above_3, iou_time_above_5, iou_time_above_7, \
         frac_time_above_1, frac_time_above_3, frac_time_above_5, frac_time_above_7 \
-        = iou_stats(iou_time_list)
+        = iou_stats(iou_time_list, view_ranks)
 
-    mr = (frac_time_above_1 + frac_time_above_3 + frac_time_above_5) / 3
+    mr = (frac_time_above_1 + frac_time_above_3 + frac_time_above_5 + frac_time_above_7) / 4
 
     print(f'Threshold {args.pred_threshold}  0.1: {frac_time_above_1},  0.3: {frac_time_above_3},  '
           f'0.5: {frac_time_above_5},  0.7: {frac_time_above_7},  mR: {mr}')
@@ -210,32 +211,49 @@ def visualize_grounding(video_path, clip_start_stop_time, pred_start_end_time):
 
 
 def total_random_baseline(test_loader, args):
+
+    iou_list = []
+    preds1_list = []
+    labels1_list = []
+    captions_list = []
+    feature_idxs_list = []
+    feature_times_list = []
+    clip_start_stop_time_list = []
+    iou_time_list = torch.tensor([])
+    view_ranks = []
+
+    ### ORIGINAL CODE BELOW----------------------
+
     iou_time_list = torch.tensor([])
     labels_cap1 = []
     clip_start_stop_times = []
     captions = []
     for feature_idxs, feature_times, bert_features, num_tokens, label_caption1, caption1, clip_start_stop_time, \
-        video_id in test_loader:
+        video_id, view_rank in tqdm(test_loader):
 
-        labels_cap1.append(label_caption1)
-        clip_start_stop_times.append(clip_start_stop_time)
-        captions.append(caption1)
-        duration = feature_times[0, -1]
-        pred_times = np.random.uniform(0, duration, 2)
-        pred_times = torch.tensor(pred_times)
-        pred_start_time = pred_times[0]
-        pred_end_time = pred_times[1]
-        start_time = clip_start_stop_time[0]
-        end_time = clip_start_stop_time[1]
-        iou_time_value = iou_time(pred_start_time, pred_end_time, start_time, end_time)
+        #ground each keystep in current window separately, but compute statistics over window before appending to iou_list, etc.
+        for bert_f, lab_cap, num_tok, cl_sta_sto in zip(bert_features, label_caption1, num_tokens, clip_start_stop_time):
 
-        iou_time_list = torch.cat((iou_time_list, iou_time_value))
+            labels_cap1.append(lab_cap)
+            clip_start_stop_time_list.append(cl_sta_sto)
+            captions.append(caption1)
+            duration = feature_times[0, -1]
+            pred_times = np.random.uniform(0, duration, 2)
+            pred_times = torch.tensor(pred_times)
+            pred_start_time = pred_times[0]
+            pred_end_time = pred_times[1]
+            start_time = cl_sta_sto[0]
+            end_time = cl_sta_sto[1]
+            iou_time_value = iou_time(pred_start_time, pred_end_time, start_time, end_time)
+
+            iou_time_list = torch.cat((iou_time_list, iou_time_value))
+            view_ranks.append(view_rank[0])
 
     iou_time_above_1, iou_time_above_3, iou_time_above_5, iou_time_above_7, \
         frac_time_above_1, frac_time_above_3, frac_time_above_5, frac_time_above_7 \
-        = iou_stats(iou_time_list)
+        = iou_stats(iou_time_list, view_ranks)
 
-    mr = (frac_time_above_1 + frac_time_above_3 + frac_time_above_5) / 3
+    mr = (frac_time_above_1 + frac_time_above_3 + frac_time_above_5 + frac_time_above_7) / 4
 
     print(f'0.1: {frac_time_above_1},  0.3: {frac_time_above_3},  0.5: {frac_time_above_5},  0.7: {frac_time_above_7}'
           f'  mR:  {mr} \n')

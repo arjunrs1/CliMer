@@ -9,15 +9,26 @@ if [ "$1" == "ego4d" ]; then
 elif [ "$1" == "epic" ]; then
     source config/epic.config
     echo 'epic'
+
+elif [ "$1" == "egoexo4d_exo_narrations" ]; then
+    source config/egoexo4d_exo_narrations.config
+    echo 'egoexo4d exo narrations'
+
+elif [ "$1" == "egoexo4d_exo_keysteps" ]; then
+    source config/egoexo4d_exo_keysteps.config
+    echo 'egoexo4d exo keysteps'
 fi
 
-python evaluation.py \
+#NOTE: Add --egovlp $EGOVLP back into this!!!!!!
+
+python evaluation_multi_ks_grounding.py \
     --dataset $DATASET \
     --model-path $MODEL_PATH \
     --video-feature-path $VIDEO_FEATURE_PATH \
     --caption-data-train $CAPTION_DATA_TRAIN \
     --caption-data-val $CAPTION_DATA_VAL \
     --caption-data-test $CAPTION_DATA_TEST \
+    --window-data-test $WINDOW_DATA_TEST \
     --ego4d-metadata $EGO4D_METADATA \
     --epic-metadata $EPIC_METADATA \
     --epic-all-data $EPIC_ALL_DATA \
@@ -39,7 +50,6 @@ python evaluation.py \
     --combine $COMBINE \
     --fixed-clip-length $FIXED_CLIP_LENGTH \
     --clip-adjacent-timestamps $CLIP_ADJACENT_TIMESTAMPS \
-    --egovlp $EGOVLP \
     --checkpoint-save-path $CHECKPOINT_SAVE_PATH \
     --checkpoint-frequency $CHECKPOINT_FREQUENCY \
     --fps $FPS \

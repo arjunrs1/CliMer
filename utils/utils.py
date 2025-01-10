@@ -2,7 +2,7 @@ import numpy as np
 import torch
 
 
-def iou_stats(iou_time_list):
+def iou_stats_general(iou_time_list):
     iou_time_above_1 = torch.where(iou_time_list > 0.1)
     frac_time_above_1 = iou_time_above_1[0].size()[0] / iou_time_list.size()[0]
 
@@ -22,6 +22,45 @@ def iou_stats(iou_time_list):
 
     return iou_time_above_1, iou_time_above_3, iou_time_above_5, iou_time_above_7, frac_time_above_1, \
         frac_time_above_3, frac_time_above_5, frac_time_above_7
+
+def iou_stats(iou_time_list, view_ranks=None):
+    if view_ranks is None:
+        return iou_stats_general(iou_time_list)
+    # Compute metrics for all IoUs
+    def compute_metrics(iou_list):
+        iou_time_above_1 = torch.where(iou_list > 0.1)
+        frac_time_above_1 = iou_time_above_1[0].size()[0] / iou_list.size()[0]
+        iou_time_above_3 = torch.where(iou_list > 0.3)
+        frac_time_above_3 = iou_time_above_3[0].size()[0] / iou_list.size()[0]
+        iou_time_above_5 = torch.where(iou_list > 0.5)
+        frac_time_above_5 = iou_time_above_5[0].size()[0] / iou_list.size()[0]
+        iou_time_above_7 = torch.where(iou_list > 0.7)
+        frac_time_above_7 = iou_time_above_7[0].size()[0] / iou_list.size()[0]
+        mr = (frac_time_above_1 + frac_time_above_3 + frac_time_above_5 + frac_time_above_7) / 4
+        return frac_time_above_1, frac_time_above_3, frac_time_above_5, frac_time_above_7, mr
+    # Compute metrics for all IoUs
+    overall_metrics = compute_metrics(iou_time_list)
+    print('Overall IoU Metrics:')
+    print('IoU 0.1: ', overall_metrics[0])
+    print('IoU 0.3: ', overall_metrics[1])
+    print('IoU 0.5: ', overall_metrics[2])
+    print('IoU 0.7: ', overall_metrics[3])
+    print('mR: ', overall_metrics[4])
+    # Compute metrics for each category
+    unique_categories = set(view_ranks)
+    category_metrics = {}
+    for category in unique_categories:
+        indices = [i for i, rank in enumerate(view_ranks) if rank == category]
+        category_iou_list = iou_time_list[indices]
+        category_metrics[category] = compute_metrics(category_iou_list)
+        print(f'\nIoU Metrics for category "{category}":')
+        print('IoU 0.1: ', category_metrics[category][0])
+        print('IoU 0.3: ', category_metrics[category][1])
+        print('IoU 0.5: ', category_metrics[category][2])
+        print('IoU 0.7: ', category_metrics[category][3])
+        print('mR: ', category_metrics[category][4])
+    return None, None, None, None, overall_metrics[0], \
+        overall_metrics[1], overall_metrics[2], overall_metrics[3]
 
 
 def iou_time(pred_start_time, pred_end_time, start_time, end_time):
@@ -56,7 +95,7 @@ def iou_time_based(final_preds, feature_times, clip_start_stop_time):
 
     iou_time_value = iou_time(pred_start_time, pred_stop_time, start_time, stop_time)
 
-    return iou_time_value
+    return iou_time_value, pred_start_time, pred_stop_time
 
 
 def get_hard_preds(preds, threshold):

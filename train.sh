@@ -9,7 +9,18 @@ if [ "$1" == "ego4d" ]; then
 elif [ "$1" == "epic" ]; then
     source config/epic.config
     echo 'epic'
+
+elif [ "$1" == "egoexo4d_exo_narrations" ]; then
+    source config/egoexo4d_exo_narrations.config
+    echo 'egoexo4d exo narrations'
+
+elif [ "$1" == "egoexo4d_exo_keysteps" ]; then
+    source config/egoexo4d_exo_keysteps.config
+    echo 'egoexo4d exo keysteps'
+
 fi
+
+#NOTE: Add --egovlp $EGOVLP back into this!!!!!!
 
 python train.py \
     --dataset $DATASET \
@@ -39,7 +50,6 @@ python train.py \
     --combine $COMBINE \
     --fixed-clip-length $FIXED_CLIP_LENGTH \
     --clip-adjacent-timestamps $CLIP_ADJACENT_TIMESTAMPS \
-    --egovlp $EGOVLP \
     --checkpoint-save-path $CHECKPOINT_SAVE_PATH \
     --checkpoint-frequency $CHECKPOINT_FREQUENCY \
     --fps $FPS \
@@ -52,5 +62,6 @@ python train.py \
     --shared-projection-dim $SHARED_PROJECTION_DIM \
     --feature-embed-dim $FEATURE_EMBED_DIM \
     --linear-hidden-dim $LINEAR_HIDDEN_DIM \
-    --num-heads $NUM_HEADS
+    --num-heads $NUM_HEADS \
+    --use-keysteps $USE_KEYSTEPS
 

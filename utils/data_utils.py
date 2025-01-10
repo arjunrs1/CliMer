@@ -53,6 +53,56 @@ def load_omnivore_clip_features_diff_videos(omnivore_dict, combined_feature_idxs
 
     return batch_features
 
+def load_all_egovlpv2_features_old(caption_data_train, caption_data_val, caption_data_test, train_metadata, val_metadata, test_metadata, omnivore_features_path):
+    train_data = pd.read_csv(caption_data_train)
+    val_data = pd.read_csv(caption_data_val)
+    test_data = pd.read_csv(caption_data_test)
+
+    train_metadata = pd.read_csv(train_metadata)
+    val_metadata = pd.read_csv(val_metadata)
+    test_metadata = pd.read_csv(test_metadata)
+        
+    train_ids = list(set(train_data.apply(lambda row: f"{row['take_uid']}_{train_metadata.loc[train_metadata['take_name']==row['take_uid']]['exo_audio_camera'].iloc[0]}", axis=1)))
+    val_ids = list(set(val_data.apply(lambda row: f"{row['take_uid']}_{val_metadata.loc[val_metadata['take_name']==row['take_uid']]['exo_audio_camera'].iloc[0]}", axis=1)))
+    test_ids = list(set(test_data.apply(lambda row: f"{row['take_uid']}_{test_metadata.loc[test_metadata['take_name']==row['take_uid']]['exo_audio_camera'].iloc[0]}", axis=1)))
+    all_ids = train_ids + val_ids + test_ids
+
+    omnivore_dict = {}
+
+    for i, vid_id in enumerate(all_ids):
+        if i % 100 == 0:
+            print(i)
+        file = torch.load(
+            f'{omnivore_features_path}/{vid_id}.pt', map_location='cpu')
+        file = torch.tensor(file)
+        file.to('cpu')
+        omnivore_dict[vid_id] = file
+
+    return omnivore_dict
+
+def load_all_egovlpv2_features(caption_data_train, caption_data_val, caption_data_test, omnivore_features_path):
+    train_data = pd.read_csv(caption_data_train)
+    val_data = pd.read_csv(caption_data_val)
+    test_data = pd.read_csv(caption_data_test)
+    
+    train_ids = list(set(np.array(train_data['video_id'])))
+    val_ids = list(set(np.array(val_data['video_id'])))
+    test_ids = list(set(np.array(test_data['video_id'])))
+    all_ids = train_ids + val_ids + test_ids
+
+    omnivore_dict = {}
+
+    for i, vid_id in enumerate(all_ids):
+        if i % 100 == 0:
+            print(i)
+        file = torch.load(
+            f'{omnivore_features_path}/{vid_id}.pt', map_location='cpu')
+        file = torch.tensor(file)
+        file.to('cpu')
+        omnivore_dict[vid_id] = file
+
+    return omnivore_dict
+
 def load_all_omnivore_features(caption_data_train, caption_data_val, caption_data_test, omnivore_features_path):
     train_data = pd.read_csv(caption_data_train)
     val_data = pd.read_csv(caption_data_val)
